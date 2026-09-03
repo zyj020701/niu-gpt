@@ -3,5 +3,8 @@
   "framework": null,
   "buildCommand": "pnpm build-storybook",
   "outputDirectory": "storybook-static",
-  "installCommand": "pnpm install --frozen-lockfile"
+  "installCommand": "pnpm install --frozen-lockfile",
+  "functions": {
+    "api/chat.mjs": { "maxDuration": 60 }
+  }
 }
