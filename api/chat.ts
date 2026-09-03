@@ -7,15 +7,84 @@
  * 而是把 **Storybook 静态站点**（storybook-static）当作产物发布。
  *
  * Vercel 对「非框架项目」的约定是：根目录 `api/` 下的文件会自动变成
- * Serverless Function。为了不重复实现一遍流式逻辑，这里直接从 Next.js
- * 路由文件里复用同一份 POST 处理函数（逻辑完全一致：streamText +
- * UIMessage Stream Protocol + abortSignal 透传）。
+ * Serverless Function。
+ *
+ * 注意：这里的逻辑**自包含**，且 `ai` / `@ai-sdk/openai` 改成在 POST 内部
+ * **动态 import()**，并整段 try/catch。原因：
+ *   1) Vercel 构建函数时是独立打包，pnpm 默认的符号链接 node_modules(.pnpm)
+ *      可能导致第三方依赖在函数运行时加载失败（FUNCTION_INVOCATION_FAILED）；
+ *   2) 顶部静态 import 一旦抛错，整个函数（含 GET 诊断）都会 500 白屏；
+ *      动态 import + try/catch 后，任何错误都能以 JSON 形式返回真实原因。
+ * 同时仓库根目录的 .npmrc 设置了 node-linker=hoisted 作为双保险。
  *
  * 部署后需要在 Vercel Project Settings → Environment Variables 配置：
  *   OPENAI_BASE_URL / OPENAI_API_KEY / OPENAI_MODEL
  * ============================================================================
  */
-export { POST, runtime, maxDuration } from "../app/api/chat/route";
+export const maxDuration = 60;
+
+import type { UIMessage } from "ai";
+
+/**
+ * POST /api/chat —— 流式聊天（UIMessage Stream Protocol）
+ */
+export async function POST(request: Request) {
+  let messages: UIMessage[] = [];
+  try {
+    const body = (await request.json()) as { messages?: UIMessage[] };
+    messages = Array.isArray(body?.messages) ? body.messages : [];
+  } catch {
+    return json({ error: "请求体不是合法 JSON" }, 400);
+  }
+  if (messages.length === 0) {
+    return json({ error: "messages 参数必填，且需为非空数组" }, 400);
+  }
+
+  const baseURL = process.env.OPENAI_BASE_URL;
+  const apiKey = process.env.OPENAI_API_KEY;
+  const modelName = process.env.OPENAI_MODEL;
+  if (!baseURL || !apiKey || !modelName) {
+    return json(
+      {
+        error:
+          "缺少环境变量 OPENAI_BASE_URL / OPENAI_API_KEY / OPENAI_MODEL：请在 Vercel → Settings → Environment Variables 配置（勾选 Production），并对最新部署 Redeploy。",
+        env: {
+          OPENAI_BASE_URL: !!baseURL,
+          OPENAI_API_KEY: !!apiKey,
+          OPENAI_MODEL: !!modelName,
+        },
+      },
+      500
+    );
+  }
+
+  try {
+    // 动态 import：避免第三方依赖在函数运行时加载失败导致整个函数 500 白屏
+    const { streamText, convertToModelMessages } = await import("ai");
+    const { createOpenAI } = await import("@ai-sdk/openai");
+
+    const provider = createOpenAI({ baseURL, apiKey });
+    const result = streamText({
+      model: provider.chat(modelName),
+      messages: await convertToModelMessages(messages),
+      abortSignal: request.signal, // 透传用户「停止」信号
+    });
+    return result.toUIMessageStreamResponse();
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    if (
+      message.toLowerCase().includes("abort") ||
+      (err instanceof Error && err.name === "AbortError")
+    ) {
+      return new Response(null, { status: 204 });
+    }
+    // 返回真实错误，方便定位（Key 无效 / 模型名错误 / 网络等）
+    return json(
+      { error: message, name: err instanceof Error ? err.name : undefined },
+      500
+    );
+  }
+}
 
 /**
  * ============================================================================
