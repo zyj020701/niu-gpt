@@ -2,6 +2,10 @@
   "name": "@zyj020701/datatable-pro-core",
   "version": "1.0.0",
   "description": "A type-safe, composable React DataTable component library",
+  "packageManager": "pnpm@9.15.9",
+  "engines": {
+    "node": ">=18.0.0"
+  },
   "main": "./dist/index.js",
   "module": "./dist/index.mjs",
   "types": "./dist/index.d.ts",

@@ -17,6 +17,6 @@
     "outDir": "./dist",
     "types": ["node"]
   },
-  "include": ["src/**/*", "app/**/*"],
+  "include": ["src/**/*", "app/**/*", "api/**/*"],
   "exclude": ["node_modules", "dist", "**/*.stories.tsx", "**/*.test.tsx"]
 }
